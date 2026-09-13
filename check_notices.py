@@ -23,7 +23,7 @@ def init_firebase():
 def get_latest_notices():
     """공지사항 목록 페이지를 읽어서 게시글 레코드 목록을 반환한다.
 
-    각 레코드: id(articleNo), title, category, author, date, is_new, url
+    각 레코드: id(articleNo), title, category, date, url
     """
     resp = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
     resp.encoding = "utf-8"
@@ -48,9 +48,7 @@ def get_latest_notices():
             "id": int(match.group(1)),
             "title": link.get_text(strip=True),
             "category": category_tag.get_text(strip=True) if category_tag else None,
-            "author": info_items[1].get_text(strip=True) if len(info_items) > 1 else None,
             "date": info_items[2].get_text(strip=True) if len(info_items) > 2 else None,
-            "is_new": li.select_one(".c-board-list-new") is not None,
             "url": urljoin(URL, link["href"]),
         })
     return notices
@@ -67,6 +65,12 @@ def get_last_seen_id(db) -> int:
 def save_last_seen_id(db, article_id: int) -> None:
     """가장 최신 게시글 번호를 Firestore에 저장한다."""
     db.collection(STATE_COLLECTION).document(STATE_DOC).set({"last_id": article_id})
+
+
+def save_notice_record(db, notice: dict) -> None:
+    """새로 발견한 공지 레코드 전체(title, category, date, url)를
+    notices 컬렉션에 히스토리로 남긴다. 문서 이름은 articleNo."""
+    db.collection("notices").document(str(notice["id"])).set(notice)
 
 
 def send_push(title: str) -> None:
@@ -91,6 +95,7 @@ def main():
     for notice in new_ones:
         label = f"[{notice['category']}] {notice['title']}" if notice["category"] else notice["title"]
         send_push(label)
+        save_notice_record(db, notice)
 
     if notices:
         save_last_seen_id(db, max(n["id"] for n in notices))
