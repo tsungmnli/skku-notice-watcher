@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -20,19 +21,38 @@ def init_firebase():
 
 
 def get_latest_notices():
-    """공지사항 목록 페이지를 읽어서 [{id, title}, ...] 형태로 반환한다."""
+    """공지사항 목록 페이지를 읽어서 게시글 레코드 목록을 반환한다.
+
+    각 레코드: id(articleNo), title, category, author, date, is_new, url
+    """
     resp = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
     resp.encoding = "utf-8"
     soup = BeautifulSoup(resp.text, "html.parser")
 
     notices = []
-    for a in soup.select("a[href*='mode=view']"):
-        match = re.search(r"articleNo=(\d+)", a.get("href", ""))
-        if match:
-            notices.append({
-                "id": int(match.group(1)),
-                "title": a.get_text(strip=True),
-            })
+    # 실제 게시판 마크업: ul.board-list-wrap > li 하나가 게시글 한 건
+    for li in soup.select("ul.board-list-wrap > li"):
+        link = li.select_one("dt.board-list-content-title a[href*='mode=view']")
+        if not link:
+            continue
+
+        match = re.search(r"articleNo=(\d+)", link.get("href", ""))
+        if not match:
+            continue
+
+        category_tag = li.select_one(".c-board-list-category")
+        # dd 안의 li 순서: [공지/게시글번호, 작성자, 날짜, 조회수]
+        info_items = li.select("dd.board-list-content-info li")
+
+        notices.append({
+            "id": int(match.group(1)),
+            "title": link.get_text(strip=True),
+            "category": category_tag.get_text(strip=True) if category_tag else None,
+            "author": info_items[1].get_text(strip=True) if len(info_items) > 1 else None,
+            "date": info_items[2].get_text(strip=True) if len(info_items) > 2 else None,
+            "is_new": li.select_one(".c-board-list-new") is not None,
+            "url": urljoin(URL, link["href"]),
+        })
     return notices
 
 
@@ -69,7 +89,8 @@ def main():
     )
 
     for notice in new_ones:
-        send_push(notice["title"])
+        label = f"[{notice['category']}] {notice['title']}" if notice["category"] else notice["title"]
+        send_push(label)
 
     if notices:
         save_last_seen_id(db, max(n["id"] for n in notices))
